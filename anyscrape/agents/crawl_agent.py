@@ -141,7 +141,9 @@ class CrawlAgent:
         async def run_with_headless(flag: bool) -> PageContent | None:
             proxy = self._proxy_rotator.get_proxy()
             if proxy:
-                logger.info("Crawling URL (headless=%s, proxy=%s): %s", flag, proxy["server"], url)
+                # Log proxy host without credentials
+                proxy_host = proxy["server"].split("@")[-1] if "@" in proxy["server"] else proxy["server"]
+                logger.info("Crawling URL (headless=%s, proxy=%s): %s", flag, proxy_host, url)
             else:
                 logger.info("Crawling URL (headless=%s): %s", flag, url)
             browser_config = BrowserConfig(
