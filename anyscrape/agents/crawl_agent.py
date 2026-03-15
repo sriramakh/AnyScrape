@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import random
 import time
-from typing import List, Dict, Any, Literal
+from typing import List, Dict, Any, Literal, Optional
+from urllib.parse import urlparse
 
+import requests
 from bs4 import BeautifulSoup
 from crawl4ai import (
     AsyncWebCrawler,
@@ -34,6 +37,70 @@ class PageContent:
 logger = logging.getLogger("anyscrape.crawl")
 
 
+class ProxyRotator:
+    """Manages a pool of Webshare proxies and rotates through them."""
+
+    def __init__(self, settings) -> None:
+        self._settings = settings
+        self._proxies: List[Dict[str, str]] = []
+        self._index = 0
+        self._loaded = False
+
+    def _load_proxies(self) -> None:
+        """Load proxies from Webshare API or direct config."""
+        if self._loaded:
+            return
+        self._loaded = True
+
+        # Option 1: Fetch proxy list from Webshare API
+        if self._settings.webshare_api_key:
+            try:
+                resp = requests.get(
+                    "https://proxy.webshare.io/api/v2/proxy/list/"
+                    "?mode=direct&page=1&page_size=100",
+                    headers={"Authorization": f"Token {self._settings.webshare_api_key}"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                for p in data.get("results", []):
+                    self._proxies.append({
+                        "server": f"http://{p['proxy_address']}:{p['port']}",
+                        "username": p.get("username", ""),
+                        "password": p.get("password", ""),
+                    })
+                logger.info("Loaded %d proxies from Webshare API", len(self._proxies))
+            except Exception as e:
+                logger.error("Failed to load proxies from Webshare API: %s", e)
+
+        # Option 2: Direct proxy credentials (single rotating endpoint)
+        if not self._proxies and self._settings.webshare_proxy_host:
+            self._proxies.append({
+                "server": f"http://{self._settings.webshare_proxy_host}:{self._settings.webshare_proxy_port}",
+                "username": self._settings.webshare_proxy_username,
+                "password": self._settings.webshare_proxy_password,
+            })
+            logger.info("Using direct Webshare rotating proxy endpoint")
+
+        # Shuffle to avoid all workers hitting the same proxy first
+        if len(self._proxies) > 1:
+            random.shuffle(self._proxies)
+
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        """Return the next proxy config dict, or None if no proxies configured."""
+        self._load_proxies()
+        if not self._proxies:
+            return None
+        proxy = self._proxies[self._index % len(self._proxies)]
+        self._index += 1
+        return proxy
+
+    @property
+    def is_enabled(self) -> bool:
+        self._load_proxies()
+        return len(self._proxies) > 0
+
+
 class CrawlAgent:
     """
     Agent responsible for crawling and extracting relevant content
@@ -45,6 +112,7 @@ class CrawlAgent:
         self._settings = get_settings()
         self._llm = LLMAgent()
         self._memory = get_memory_store()
+        self._proxy_rotator = ProxyRotator(self._settings)
 
     async def _crawl_single(
         self, crawler: AsyncWebCrawler, url: str, headless: bool | None = None
@@ -73,8 +141,15 @@ class CrawlAgent:
         headless_flag = default_headless if headless is None else headless
 
         async def run_with_headless(flag: bool) -> PageContent | None:
-            logger.info("Crawling URL (headless=%s): %s", flag, url)
-            browser_config = BrowserConfig(headless=flag)
+            proxy = self._proxy_rotator.get_proxy()
+            if proxy:
+                logger.info("Crawling URL (headless=%s, proxy=%s): %s", flag, proxy["server"], url)
+            else:
+                logger.info("Crawling URL (headless=%s): %s", flag, url)
+            browser_config = BrowserConfig(
+                headless=flag,
+                proxy_config=proxy if proxy else None,
+            )
             run_config = CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS,
                 page_timeout=80000,

@@ -10,6 +10,12 @@ class Settings:
     max_search_results: int = 5
     max_crawl_concurrency: int = 3
     headless_default: bool = True
+    # Webshare proxy rotation (set API key OR direct proxy credentials)
+    webshare_api_key: str = ""
+    webshare_proxy_host: str = ""
+    webshare_proxy_port: str = ""
+    webshare_proxy_username: str = ""
+    webshare_proxy_password: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -28,6 +34,11 @@ class Settings:
             max_search_results=max_results,
             max_crawl_concurrency=concurrency,
             headless_default=headless_default,
+            webshare_api_key=os.getenv("WEBSHARE_API_KEY", ""),
+            webshare_proxy_host=os.getenv("WEBSHARE_PROXY_HOST", ""),
+            webshare_proxy_port=os.getenv("WEBSHARE_PROXY_PORT", ""),
+            webshare_proxy_username=os.getenv("WEBSHARE_PROXY_USERNAME", ""),
+            webshare_proxy_password=os.getenv("WEBSHARE_PROXY_PASSWORD", ""),
         )
 
 
