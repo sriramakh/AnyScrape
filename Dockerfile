@@ -35,8 +35,5 @@ COPY . .
 # However, for a simple CLI container, root is often fine. 
 # We'll stick to root for simplicity unless strictly required.
 
-# Entrypoint allows running the container as an executable
-ENTRYPOINT ["python", "-m", "anyscrape.cli"]
-
-# Default command if no arguments are provided
-CMD ["--help"]
+# Run the web API server by default
+ENTRYPOINT ["uvicorn", "anyscrape.web_app:app", "--host", "0.0.0.0", "--port", "8000"]
