@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 from typing import Literal, Optional, Dict, Any
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .logging_utils import configure_logging
 from .orchestrator import AnyScrapeOrchestrator
 from .agents.crawl_agent import Mode
 
+
+logger = logging.getLogger("anyscrape.web")
 
 app = FastAPI(
     title="AnyScrape API",
@@ -47,14 +51,25 @@ async def health() -> Dict[str, str]:
 
 
 @app.post("/query", response_model=QueryResponse, tags=["query"])
-async def query_endpoint(payload: QueryRequest) -> QueryResponse:
+async def query_endpoint(payload: QueryRequest) -> QueryResponse | JSONResponse:
     """
     Run the full AnyScrape pipeline for a given query.
     """
-    assert _orchestrator is not None, "Orchestrator not initialized"
+    if _orchestrator is None:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Orchestrator not initialized yet"},
+        )
     mode: Mode = payload.mode  # type: ignore[assignment]
-    result = await _orchestrator.run_query(payload.query, mode=mode)
-    return QueryResponse(**result)
+    try:
+        result = await _orchestrator.run_query(payload.query, mode=mode)
+        return QueryResponse(**result)
+    except Exception:
+        logger.exception("Pipeline failed for query: %s", payload.query)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal pipeline error. Check server logs for details."},
+        )
 
 
 @app.get("/", tags=["ui"])
@@ -65,7 +80,5 @@ async def root() -> Dict[str, str]:
     """
     return {
         "message": "AnyScrape API is running. POST a JSON body to /query with "
-        '{"query": \"your question\", "mode": "fast"|"comprehensive"} to use it.'
+        '{"query": "your question", "mode": "fast"|"comprehensive"} to use it.'
     }
-
-

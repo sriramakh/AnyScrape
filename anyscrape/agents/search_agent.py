@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 from typing import List
@@ -49,34 +50,13 @@ class SearchAgent:
         logger.info("DuckDuckGo returned %d results", len(results))
         return results
 
-    def rank_relevance(self, query: str, results: List[SearchResult]) -> List[SearchResult]:
+    async def async_web_search(self, query: str) -> List[SearchResult]:
         """
-        Let the LLM re-rank the top results by relevance to the query.
+        Run DuckDuckGo search in a thread to avoid blocking the event loop.
         """
-        if not results:
-            return results
+        return await asyncio.to_thread(self.web_search, query)
 
-        json_lines = []
-        for idx, r in enumerate(results):
-            json_lines.append(
-                f"{idx+1}. title={r.title!r}, url={r.url!r}, snippet={r.snippet!r}"
-            )
-
-        system_prompt = (
-            "You are a web research planner. Given a user query and a list of "
-            "search results, you must select and re-order the results from most "
-            "to least relevant. Respond ONLY with a comma-separated list of "
-            "result indices in desired order, e.g. '2,1,3'."
-        )
-        content = self._llm.complete(
-            system_prompt=system_prompt,
-            messages=[
-                {"role": "user", "content": f"Query: {query}\nResults:\n" + "\n".join(json_lines)}
-            ],
-            temperature=0.0,
-            max_tokens=64,
-        )
-
+    def _parse_rank_indices(self, content: str, results: List[SearchResult]) -> List[int]:
         index_order: List[int] = []
         for token in content.split(","):
             token = token.strip()
@@ -85,14 +65,32 @@ class SearchAgent:
             idx = int(token) - 1
             if 0 <= idx < len(results):
                 index_order.append(idx)
+        return index_order
 
+    def _build_rank_prompt(self, query: str, results: List[SearchResult]) -> tuple[str, list]:
+        json_lines = []
+        for idx, r in enumerate(results):
+            json_lines.append(
+                f"{idx+1}. title={r.title!r}, url={r.url!r}, snippet={r.snippet!r}"
+            )
+        system_prompt = (
+            "You are a web research planner. Given a user query and a list of "
+            "search results, you must select and re-order the results from most "
+            "to least relevant. Respond ONLY with a comma-separated list of "
+            "result indices in desired order, e.g. '2,1,3'."
+        )
+        messages = [
+            {"role": "user", "content": f"Query: {query}\nResults:\n" + "\n".join(json_lines)}
+        ]
+        return system_prompt, messages
+
+    def _apply_ranking(self, results: List[SearchResult], index_order: List[int]) -> List[SearchResult]:
         if not index_order:
             logger.info(
                 "Re-ranking returned no valid indices, keeping original order for %d results",
                 len(results),
             )
             return results
-
         ordered = [results[i] for i in index_order]
         top = ordered[0]
         logger.info(
@@ -101,6 +99,32 @@ class SearchAgent:
             top.url,
         )
         return ordered
+
+    def rank_relevance(self, query: str, results: List[SearchResult]) -> List[SearchResult]:
+        """
+        Let the LLM re-rank the top results by relevance to the query.
+        """
+        if not results:
+            return results
+        system_prompt, messages = self._build_rank_prompt(query, results)
+        content = self._llm.complete(
+            system_prompt=system_prompt, messages=messages,
+            temperature=0.0, max_tokens=64,
+        )
+        return self._apply_ranking(results, self._parse_rank_indices(content, results))
+
+    async def arank_relevance(self, query: str, results: List[SearchResult]) -> List[SearchResult]:
+        """
+        Async version of rank_relevance.
+        """
+        if not results:
+            return results
+        system_prompt, messages = self._build_rank_prompt(query, results)
+        content = await self._llm.acomplete(
+            system_prompt=system_prompt, messages=messages,
+            temperature=0.0, max_tokens=64,
+        )
+        return self._apply_ranking(results, self._parse_rank_indices(content, results))
 
 
 

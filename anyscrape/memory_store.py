@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import threading
+import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger("anyscrape.memory")
 
 
 def _default_memory_path() -> str:
@@ -37,9 +42,15 @@ class MemoryStore:
     so that future runs can adapt based on past experience.
     """
 
+    # Minimum interval between disk writes to reduce I/O contention under
+    # concurrent requests.
+    _SAVE_INTERVAL = 5.0  # seconds
+
     def __init__(self, path: str | None = None) -> None:
         self._path = path or _default_memory_path()
         self._lock = threading.Lock()
+        self._dirty = False
+        self._last_save: float = 0.0
         # _data structure:
         # {
         #   "decision_agent": { "<domain>": {...} },
@@ -56,16 +67,38 @@ class MemoryStore:
                     if isinstance(raw, dict):
                         self._data = raw  # type: ignore[assignment]
         except Exception:
-            # On any error, fall back to empty memory rather than failing the app.
             self._data = {}
 
     def _save(self) -> None:
+        """Write to disk atomically via temp file rename."""
         directory = os.path.dirname(self._path)
         os.makedirs(directory, exist_ok=True)
         tmp_path = self._path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2, sort_keys=True)
         os.replace(tmp_path, self._path)
+        self._last_save = time.monotonic()
+        self._dirty = False
+
+    def _maybe_save(self) -> None:
+        """Save to disk only if enough time has passed since the last write."""
+        if not self._dirty:
+            return
+        now = time.monotonic()
+        if now - self._last_save >= self._SAVE_INTERVAL:
+            try:
+                self._save()
+            except Exception:
+                logger.warning("Failed to save memory store", exc_info=True)
+
+    def flush(self) -> None:
+        """Force an immediate save if there are pending changes."""
+        with self._lock:
+            if self._dirty:
+                try:
+                    self._save()
+                except Exception:
+                    logger.warning("Failed to flush memory store", exc_info=True)
 
     def _agent_bucket(self, agent_name: str) -> Dict[str, Dict[str, Any]]:
         return self._data.setdefault(agent_name, {})
@@ -81,13 +114,15 @@ class MemoryStore:
         with self._lock:
             stats = self.get_domain_stats(agent_name, domain)
             stats[key] = int(stats.get(key, 0)) + delta
-            self._save()
+            self._dirty = True
+            self._maybe_save()
 
     def set_value(self, agent_name: str, domain: str, key: str, value: Any) -> None:
         with self._lock:
             stats = self.get_domain_stats(agent_name, domain)
             stats[key] = value
-            self._save()
+            self._dirty = True
+            self._maybe_save()
 
     def get_value(
         self, agent_name: str, domain: str, key: str, default: Any | None = None

@@ -69,23 +69,9 @@ class DecisionAgent:
         blocked_count = int(stats.get("blocked_or_irrelevant_count", 0))
         return 0.1 * selected_count - 0.2 * blocked_count
 
-    def select_for_crawling(
-        self, query: str, ranked_results: List[SearchResult], max_candidates: int | None = None
-    ) -> DecisionOutput:
-        """
-        Choose a subset of ranked search results to crawl.
-        """
-        if not ranked_results:
-            return DecisionOutput(selected=[], skipped=[])
-
-        # First remove obvious duplicate URLs.
-        deduped = self._deduplicate(ranked_results)
-
-        # Optionally cap candidates for the LLM to keep prompts small.
-        if max_candidates is None:
-            max_candidates = min(10, len(deduped))
-        candidates = deduped[:max_candidates]
-
+    def _build_decision_prompt(
+        self, query: str, candidates: List[SearchResult]
+    ) -> tuple[str, list, list]:
         lines = []
         for idx, r in enumerate(candidates):
             bias = self._score_bias_from_memory(r)
@@ -105,18 +91,17 @@ class DecisionAgent:
             "- Choose at most 5 URLs unless the list is very small.\n"
             "- Respond ONLY with a comma-separated list of indices, e.g. '1,3,4'."
         )
-        content = self._llm.complete(
-            system_prompt=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Query:\n{query}\n\nCandidates:\n" + "\n".join(lines),
-                }
-            ],
-            temperature=0.1,
-            max_tokens=64,
-        )
+        messages = [
+            {
+                "role": "user",
+                "content": f"Query:\n{query}\n\nCandidates:\n" + "\n".join(lines),
+            }
+        ]
+        return system_prompt, messages, lines
 
+    def _apply_decision(
+        self, candidates: List[SearchResult], content: str
+    ) -> DecisionOutput:
         selected_indices: List[int] = []
         for token in content.split(","):
             token = token.strip()
@@ -127,7 +112,6 @@ class DecisionAgent:
                 selected_indices.append(idx)
 
         if not selected_indices:
-            # Fallback: take the top 3 candidates if LLM output is unusable.
             logger.info(
                 "Decision LLM returned no usable indices, falling back to top-3 of %d candidates",
                 len(candidates),
@@ -154,5 +138,47 @@ class DecisionAgent:
             len(candidates),
         )
         return DecisionOutput(selected=selected_results, skipped=skipped_results)
+
+    def _prepare_candidates(
+        self, ranked_results: List[SearchResult], max_candidates: int | None = None
+    ) -> List[SearchResult]:
+        deduped = self._deduplicate(ranked_results)
+        if max_candidates is None:
+            max_candidates = min(10, len(deduped))
+        return deduped[:max_candidates]
+
+    def select_for_crawling(
+        self, query: str, ranked_results: List[SearchResult], max_candidates: int | None = None
+    ) -> DecisionOutput:
+        """
+        Choose a subset of ranked search results to crawl.
+        """
+        if not ranked_results:
+            return DecisionOutput(selected=[], skipped=[])
+
+        candidates = self._prepare_candidates(ranked_results, max_candidates)
+        system_prompt, messages, _ = self._build_decision_prompt(query, candidates)
+        content = self._llm.complete(
+            system_prompt=system_prompt, messages=messages,
+            temperature=0.1, max_tokens=64,
+        )
+        return self._apply_decision(candidates, content)
+
+    async def aselect_for_crawling(
+        self, query: str, ranked_results: List[SearchResult], max_candidates: int | None = None
+    ) -> DecisionOutput:
+        """
+        Async version of select_for_crawling.
+        """
+        if not ranked_results:
+            return DecisionOutput(selected=[], skipped=[])
+
+        candidates = self._prepare_candidates(ranked_results, max_candidates)
+        system_prompt, messages, _ = self._build_decision_prompt(query, candidates)
+        content = await self._llm.acomplete(
+            system_prompt=system_prompt, messages=messages,
+            temperature=0.1, max_tokens=64,
+        )
+        return self._apply_decision(candidates, content)
 
 

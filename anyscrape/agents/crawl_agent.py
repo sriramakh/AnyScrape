@@ -115,7 +115,7 @@ class CrawlAgent:
         self._proxy_rotator = ProxyRotator(self._settings)
 
     async def _crawl_single(
-        self, crawler: AsyncWebCrawler, url: str, headless: bool | None = None
+        self, crawler: AsyncWebCrawler | None, url: str, headless: bool | None = None
     ) -> PageContent | None:
         """
         Crawl a single URL with automatic anti-bot detection and retry.
@@ -155,8 +155,10 @@ class CrawlAgent:
                 page_timeout=80000,
                 screenshot=False,
             )
-            crawler.config = browser_config
-            result = await crawler.arun(url=url, config=run_config)
+            # Use a dedicated crawler per call to avoid shared config mutation
+            # across concurrent tasks.
+            async with AsyncWebCrawler(config=browser_config) as per_url_crawler:
+                result = await per_url_crawler.arun(url=url, config=run_config)
             if not getattr(result, "success", True):
                 logger.warning("Crawl failed for %s (headless=%s)", url, flag)
                 if domain:
@@ -233,21 +235,7 @@ class CrawlAgent:
             return True
         return False
 
-    async def crawl_selected_results(
-        self,
-        query: str,
-        search_results: List[SearchResult],
-        mode: Mode = "fast",
-    ) -> List[PageContent]:
-        """
-        Use the LLM to select which search results to crawl and then
-        crawl them concurrently.
-        """
-        if not search_results:
-            logger.info("No search results to crawl for query: %s", query)
-            return []
-
-        # Ask LLM which URLs to crawl
+    def _build_crawl_plan_prompt(self, query: str, search_results: List[SearchResult]) -> tuple[str, list]:
         numbered = []
         for idx, r in enumerate(search_results):
             numbered.append(
@@ -260,26 +248,47 @@ class CrawlAgent:
             "result indices (e.g. '1,3,4'). Prefer primary sources related to "
             "the query, such as product pages or official listings."
         )
-        content = self._llm.complete(
-            system_prompt=system_prompt,
-            messages=[
-                {"role": "user", "content": f"Query: {query}\nResults:\n" + "\n".join(numbered)}
-            ],
-            temperature=0.1,
-            max_tokens=64,
-        )
+        messages = [
+            {"role": "user", "content": f"Query: {query}\nResults:\n" + "\n".join(numbered)}
+        ]
+        return system_prompt, messages
 
+    def _parse_crawl_indices(self, content: str, count: int) -> List[int]:
         selected_indices: List[int] = []
         for token in content.split(","):
             token = token.strip()
             if not token.isdigit():
                 continue
             idx = int(token) - 1
-            if 0 <= idx < len(search_results):
+            if 0 <= idx < count:
                 selected_indices.append(idx)
+        return selected_indices
+
+    async def crawl_selected_results(
+        self,
+        query: str,
+        search_results: List[SearchResult],
+        mode: Mode = "fast",
+    ) -> List[PageContent]:
+        """
+        Use the LLM to select which search results to crawl and then
+        crawl them concurrently. Each URL gets its own browser instance
+        to avoid shared state issues under concurrency.
+        """
+        if not search_results:
+            logger.info("No search results to crawl for query: %s", query)
+            return []
+
+        # Ask LLM which URLs to crawl (async to not block event loop)
+        system_prompt, messages = self._build_crawl_plan_prompt(query, search_results)
+        content = await self._llm.acomplete(
+            system_prompt=system_prompt, messages=messages,
+            temperature=0.1, max_tokens=64,
+        )
+
+        selected_indices = self._parse_crawl_indices(content, len(search_results))
 
         if not selected_indices:
-            # Fallback: use all results
             logger.info(
                 "Planning LLM did not return specific indices to crawl, using all %d results",
                 len(search_results),
@@ -302,45 +311,42 @@ class CrawlAgent:
             mode,
         )
 
-        async with AsyncWebCrawler() as crawler:
-            sem = asyncio.Semaphore(concurrency)
+        sem = asyncio.Semaphore(concurrency)
 
-            async def bound_crawl(u: str) -> PageContent | None:
-                async with sem:
-                    return await self._crawl_single(crawler, u)
+        async def bound_crawl(u: str) -> PageContent | None:
+            async with sem:
+                return await self._crawl_single(None, u)
 
-            tasks = [asyncio.create_task(bound_crawl(u)) for u in urls]
+        tasks = [asyncio.create_task(bound_crawl(u)) for u in urls]
 
-            pages: List[PageContent | None]
-            if mode == "fast":
-                # Enforce an overall time budget for the crawling phase.
-                crawl_timeout = 45.0
-                start_time = time.monotonic()
-                try:
-                    pages = await asyncio.wait_for(
-                        asyncio.gather(*tasks), timeout=crawl_timeout
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Crawl phase exceeded %.1f seconds; returning partial results",
-                        crawl_timeout,
-                    )
-                    pages = [t.result() if t.done() else None for t in tasks]
-                elapsed = time.monotonic() - start_time
-                logger.info(
-                    "Fast crawl phase finished in %.1f seconds", elapsed
+        pages: List[PageContent | None]
+        if mode == "fast":
+            crawl_timeout = 45.0
+            start_time = time.monotonic()
+            try:
+                pages = await asyncio.wait_for(
+                    asyncio.gather(*tasks), timeout=crawl_timeout
                 )
-            else:
-                # Comprehensive mode: allow crawls to complete without a tight global timeout.
-                pages = await asyncio.gather(*tasks)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Crawl phase exceeded %.1f seconds; returning partial results",
+                    crawl_timeout,
+                )
+                pages = [t.result() if t.done() else None for t in tasks]
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                "Fast crawl phase finished in %.1f seconds", elapsed
+            )
+        else:
+            pages = await asyncio.gather(*tasks)
 
-                # Optionally, run an adaptive crawl per root URL to discover
-                # additional relevant pages and aggregate their content.
-                for u in urls:
-                    logger.info(
-                        "Comprehensive mode: running adaptive crawl for %s", u
-                    )
-                    adaptive = AdaptiveCrawler(crawler)
+            # Adaptive crawl per root URL for comprehensive mode.
+            for u in urls:
+                logger.info(
+                    "Comprehensive mode: running adaptive crawl for %s", u
+                )
+                async with AsyncWebCrawler() as adaptive_crawler:
+                    adaptive = AdaptiveCrawler(adaptive_crawler)
                     adaptive_result = await adaptive.digest(start_url=u, query=query)
                     summary_markdown = getattr(adaptive_result, "markdown", "")
                     if summary_markdown:
@@ -353,13 +359,13 @@ class CrawlAgent:
                             )
                         )
 
-            successful_pages = [r for r in pages if r is not None]
-            logger.info(
-                "Completed crawling. Successfully crawled %d/%d URLs",
-                len(successful_pages),
-                len(urls),
-            )
-            return successful_pages
+        successful_pages = [r for r in pages if r is not None]
+        logger.info(
+            "Completed crawling. Successfully crawled %d/%d URLs",
+            len(successful_pages),
+            len(urls),
+        )
+        return successful_pages
 
     async def adaptive_crawl(
         self, start_url: str, query: str
