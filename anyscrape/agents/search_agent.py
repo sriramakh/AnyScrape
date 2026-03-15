@@ -61,9 +61,11 @@ class SearchAgent:
                         "q": query,
                         "format": "json",
                         "pageno": page,
+                        "categories": "general",
+                        "language": "en",
                     },
                     headers={"Accept": "application/json"},
-                    timeout=15,
+                    timeout=30,
                 )
                 resp.raise_for_status()
                 data = resp.json()
