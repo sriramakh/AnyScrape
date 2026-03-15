@@ -49,10 +49,17 @@ class AnyScrapeOrchestrator:
             return await self._run_pipeline(query, mode)
 
     async def _run_pipeline(self, query: str, mode: Mode) -> Dict[str, Any]:
-        logger.info("Starting AnyScrape pipeline for query: %s", query)
+        logger.info("Starting AnyScrape pipeline for query: %s (mode=%s)", query, mode)
+
+        # Configure agents for the requested mode
+        self._decision_agent.set_mode(mode)
+        self._synthesis_agent.set_mode(mode)
+
+        # Comprehensive mode gets more search results to work with
+        max_results = 10 if mode == "comprehensive" else None
 
         # Step 1: search (run blocking DDGS in a thread)
-        raw_results = await self._search_agent.async_web_search(query)
+        raw_results = await self._search_agent.async_web_search(query, max_results_override=max_results)
         ranked_results = await self._search_agent.arank_relevance(query, raw_results)
 
         # Step 1.5: decision agent filters and deduplicates links for crawling.
@@ -92,9 +99,15 @@ def run_query_sync(query: str, mode: Mode = "fast") -> Dict[str, Any]:
     crawl = orchestrator._crawl_agent
     synthesis = orchestrator._synthesis_agent
 
-    logger.info("Starting AnyScrape pipeline for query: %s", query)
+    logger.info("Starting AnyScrape pipeline for query: %s (mode=%s)", query, mode)
 
-    raw_results = search.web_search(query)
+    # Configure agents for the requested mode
+    decision.set_mode(mode)
+    synthesis.set_mode(mode)
+
+    max_results = 10 if mode == "comprehensive" else None
+
+    raw_results = search.web_search(query, max_results_override=max_results)
     ranked_results = search.rank_relevance(query, raw_results)
     decision_output = decision.select_for_crawling(query, ranked_results)
 

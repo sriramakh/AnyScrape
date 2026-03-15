@@ -29,6 +29,14 @@ class DecisionAgent:
     def __init__(self) -> None:
         self._llm = LLMAgent()
         self._memory = get_memory_store()
+        self._max_urls = 5  # default, overridden per-call via set_mode
+
+    def set_mode(self, mode: str) -> None:
+        """Adjust limits based on crawl mode."""
+        if mode == "comprehensive":
+            self._max_urls = 10
+        else:
+            self._max_urls = 5
 
     def _deduplicate(self, results: List[SearchResult]) -> List[SearchResult]:
         """
@@ -79,6 +87,7 @@ class DecisionAgent:
                 f"{idx+1}. title={r.title!r}, url={r.url!r}, snippet={r.snippet!r}, bias={bias:+.2f}"
             )
 
+        max_urls = self._max_urls
         system_prompt = (
             "You are a decision-making agent for a web scraping system.\n"
             "Given a user query and a list of search results, you MUST select only the URLs "
@@ -88,7 +97,7 @@ class DecisionAgent:
             "Rules:\n"
             "- Prefer results that are specific to the query intent (e.g. product pages, job listings).\n"
             "- Avoid near-duplicate URLs or pages that look like the same content.\n"
-            "- Choose at most 5 URLs unless the list is very small.\n"
+            f"- Choose at most {max_urls} URLs unless the list is very small.\n"
             "- Respond ONLY with a comma-separated list of indices, e.g. '1,3,4'."
         )
         messages = [

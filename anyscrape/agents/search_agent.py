@@ -31,11 +31,11 @@ class SearchAgent:
         self._settings = get_settings()
         self._llm = LLMAgent()
 
-    def web_search(self, query: str) -> List[SearchResult]:
+    def web_search(self, query: str, max_results_override: int | None = None) -> List[SearchResult]:
         """
         Use DuckDuckGo to get top N search results as raw JSON.
         """
-        max_results = self._settings.max_search_results
+        max_results = max_results_override or self._settings.max_search_results
         logger.info("Step 1/3: Running DuckDuckGo search for query: %s", query)
 
         results: List[SearchResult] = []
@@ -50,11 +50,11 @@ class SearchAgent:
         logger.info("DuckDuckGo returned %d results", len(results))
         return results
 
-    async def async_web_search(self, query: str) -> List[SearchResult]:
+    async def async_web_search(self, query: str, max_results_override: int | None = None) -> List[SearchResult]:
         """
         Run DuckDuckGo search in a thread to avoid blocking the event loop.
         """
-        return await asyncio.to_thread(self.web_search, query)
+        return await asyncio.to_thread(self.web_search, query, max_results_override)
 
     def _parse_rank_indices(self, content: str, results: List[SearchResult]) -> List[int]:
         index_order: List[int] = []

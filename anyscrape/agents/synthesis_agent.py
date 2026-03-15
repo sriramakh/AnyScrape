@@ -29,8 +29,18 @@ class SynthesisAgent:
     coherent answer tailored to the user's query.
     """
 
+    # Per-mode limits for content extraction and token generation
+    _MODE_LIMITS = {
+        "fast":          {"snippet_chars": 4000,  "max_tokens": 1200},
+        "comprehensive": {"snippet_chars": 12000, "max_tokens": 4096},
+    }
+
     def __init__(self) -> None:
         self._llm = LLMAgent()
+        self._mode = "fast"
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
 
     _SYSTEM_PROMPT = (
         "You are an autonomous web research analyst and answer generator.\n"
@@ -58,9 +68,11 @@ class SynthesisAgent:
     )
 
     def _build_messages(self, query: str, pages: List[PageContent]) -> list:
+        limits = self._MODE_LIMITS.get(self._mode, self._MODE_LIMITS["fast"])
+        snippet_chars = limits["snippet_chars"]
         snippets = []
         for idx, p in enumerate(pages):
-            snippet = p.markdown[:4000]
+            snippet = p.markdown[:snippet_chars]
             snippets.append(f"Source {idx+1} ({p.url}):\n{snippet}\n")
         return [
             {
@@ -77,14 +89,18 @@ class SynthesisAgent:
             sources=[],
         )
 
+    def _get_max_tokens(self) -> int:
+        return self._MODE_LIMITS.get(self._mode, self._MODE_LIMITS["fast"])["max_tokens"]
+
     def synthesize(self, query: str, pages: List[PageContent]) -> ConsolidatedAnswer:
         if not pages:
             return self._empty_answer(query)
-        logger.info("Step 3/3: Synthesizing final answer from %d pages", len(pages))
+        max_tokens = self._get_max_tokens()
+        logger.info("Step 3/3: Synthesizing final answer from %d pages (max_tokens=%d)", len(pages), max_tokens)
         content = self._llm.complete(
             system_prompt=self._SYSTEM_PROMPT,
             messages=self._build_messages(query, pages),
-            temperature=0.3, max_tokens=1200,
+            temperature=0.3, max_tokens=max_tokens,
         )
         sources = [{"url": p.url, "title": p.title or ""} for p in pages]
         logger.info("Synthesis complete. Produced answer of length %d characters", len(content))
@@ -94,11 +110,12 @@ class SynthesisAgent:
         """Async version of synthesize."""
         if not pages:
             return self._empty_answer(query)
-        logger.info("Step 3/3: Synthesizing final answer from %d pages", len(pages))
+        max_tokens = self._get_max_tokens()
+        logger.info("Step 3/3: Synthesizing final answer from %d pages (max_tokens=%d)", len(pages), max_tokens)
         content = await self._llm.acomplete(
             system_prompt=self._SYSTEM_PROMPT,
             messages=self._build_messages(query, pages),
-            temperature=0.3, max_tokens=1200,
+            temperature=0.3, max_tokens=max_tokens,
         )
         sources = [{"url": p.url, "title": p.title or ""} for p in pages]
         logger.info("Synthesis complete. Produced answer of length %d characters", len(content))
