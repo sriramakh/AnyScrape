@@ -6,7 +6,6 @@ import logging
 from typing import List
 
 import requests
-from ddgs import DDGS
 
 from ..config import get_settings
 from ..llm import LLMAgent
@@ -24,24 +23,34 @@ logger = logging.getLogger("anyscrape.search")
 
 class SearchAgent:
     """
-    Agent responsible for web search and selecting the most relevant
-    links for the user query. Uses SearXNG when configured, otherwise
-    falls back to DuckDuckGo.
+    Agent responsible for web search via SearXNG and selecting the most
+    relevant links for the user query.
     """
 
     def __init__(self) -> None:
         self._settings = get_settings()
         self._llm = LLMAgent()
 
-    # ── search backends ──────────────────────────────────────────
+    # ── SearXNG search ───────────────────────────────────────────
 
-    def _searxng_search(self, query: str, max_results: int) -> List[SearchResult]:
-        """Search via a SearXNG instance (JSON API)."""
+    def web_search(self, query: str, max_results_override: int | None = None) -> List[SearchResult]:
+        """
+        Search via SearXNG JSON API. Paginates automatically to collect
+        the requested number of results.
+        """
         base_url = self._settings.searxng_base_url.rstrip("/")
-        logger.info("Step 1/3: Running SearXNG search for query: %s", query)
+        if not base_url:
+            raise RuntimeError(
+                "SEARXNG_BASE_URL is not set. SearXNG is required for web search. "
+                "Set it in your .env file (e.g. SEARXNG_BASE_URL=http://localhost:8888)."
+            )
+
+        max_results = max_results_override or self._settings.max_search_results
+        logger.info("Step 1/3: Running SearXNG search for query: %s (max_results=%d)", query, max_results)
 
         results: List[SearchResult] = []
-        # SearXNG returns ~10 results per page; fetch enough pages.
+        seen_urls: set[str] = set()
+        # SearXNG returns ~10 results per page
         pages_needed = max(1, (max_results + 9) // 10)
 
         for page in range(1, pages_needed + 1):
@@ -53,6 +62,7 @@ class SearchAgent:
                         "format": "json",
                         "pageno": page,
                     },
+                    headers={"Accept": "application/json"},
                     timeout=15,
                 )
                 resp.raise_for_status()
@@ -61,12 +71,18 @@ class SearchAgent:
                 logger.error("SearXNG request failed (page %d): %s", page, e)
                 break
 
-            for r in data.get("results", []):
+            page_results = data.get("results", [])
+            if not page_results:
+                logger.debug("SearXNG returned empty results on page %d, stopping pagination", page)
+                break
+
+            for r in page_results:
                 title = r.get("title") or ""
                 url = r.get("url") or ""
                 snippet = r.get("content") or ""
-                if not url:
+                if not url or url in seen_urls:
                     continue
+                seen_urls.add(url)
                 results.append(SearchResult(title=title, url=url, snippet=snippet))
                 if len(results) >= max_results:
                     break
@@ -77,43 +93,9 @@ class SearchAgent:
         logger.info("SearXNG returned %d results", len(results))
         return results[:max_results]
 
-    def _ddgs_search(self, query: str, max_results: int) -> List[SearchResult]:
-        """Fallback search via DuckDuckGo."""
-        logger.info("Step 1/3: Running DuckDuckGo search for query: %s", query)
-        results: List[SearchResult] = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                title = r.get("title") or ""
-                url = r.get("href") or r.get("url") or ""
-                snippet = r.get("body") or r.get("snippet")
-                if not url:
-                    continue
-                results.append(SearchResult(title=title, url=url, snippet=snippet))
-        logger.info("DuckDuckGo returned %d results", len(results))
-        return results
-
-    # ── public interface ─────────────────────────────────────────
-
-    def web_search(self, query: str, max_results_override: int | None = None) -> List[SearchResult]:
-        """
-        Run a web search. Uses SearXNG if SEARXNG_BASE_URL is set,
-        otherwise falls back to DuckDuckGo.
-        """
-        max_results = max_results_override or self._settings.max_search_results
-
-        if self._settings.searxng_base_url:
-            results = self._searxng_search(query, max_results)
-            # Fall back to DDGS if SearXNG returned nothing
-            if not results:
-                logger.warning("SearXNG returned no results, falling back to DuckDuckGo")
-                results = self._ddgs_search(query, max_results)
-            return results
-
-        return self._ddgs_search(query, max_results)
-
     async def async_web_search(self, query: str, max_results_override: int | None = None) -> List[SearchResult]:
         """
-        Run web search in a thread to avoid blocking the event loop.
+        Run SearXNG search in a thread to avoid blocking the event loop.
         """
         return await asyncio.to_thread(self.web_search, query, max_results_override)
 

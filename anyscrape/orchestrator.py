@@ -29,7 +29,7 @@ class AnyScrapeOrchestrator:
     """
     High-level orchestration for the multi-agent scraping pipeline:
 
-    1. SearchAgent: run DuckDuckGo search for the user query.
+    1. SearchAgent: run SearXNG search for the user query.
     2. CrawlAgent: plan and perform crawls on selected results.
     3. SynthesisAgent: consolidate results into a final answer.
     """
@@ -58,7 +58,7 @@ class AnyScrapeOrchestrator:
         # Comprehensive mode gets more search results to work with
         max_results = 25 if mode == "comprehensive" else None
 
-        # Step 1: search (run blocking DDGS in a thread)
+        # Step 1: search (run blocking SearXNG in a thread)
         raw_results = await self._search_agent.async_web_search(query, max_results_override=max_results)
         ranked_results = await self._search_agent.arank_relevance(query, raw_results)
 

@@ -1,0 +1,3 @@
+# Disable rate limiting for internal API usage
+[botdetection.ip_limit]
+link_token = false

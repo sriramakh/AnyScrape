@@ -25,12 +25,14 @@ The system follows a linear pipeline orchestrated by the `AnyScrapeOrchestrator`
 
 #### Search Agent (`anyscrape/agents/search_agent.py`)
 -   **Role**: Discover information sources.
--   **Tools**: `ddgs` (DuckDuckGo Search).
+-   **Tools**: SearXNG (self-hosted metasearch engine).
 -   **Logic**:
-    -   Performs a web search based on the user's query.
-    -   Retrieves titles, URLs, and snippets.
+    -   Queries a SearXNG instance via its JSON API (`/search?q=...&format=json`).
+    -   Aggregates results from multiple search engines (Google, Bing, DuckDuckGo, Brave, Wikipedia).
+    -   Paginates automatically to collect the requested number of results.
+    -   Deduplicates URLs across pages.
     -   Re-ranks results using an LLM to prioritize relevance.
--   **Async**: `async_web_search()` runs the blocking DDGS call in a thread via `asyncio.to_thread`. `arank_relevance()` uses the async LLM client.
+-   **Async**: `async_web_search()` runs the blocking HTTP call in a thread via `asyncio.to_thread`. `arank_relevance()` uses the async LLM client.
 
 #### Decision Agent (`anyscrape/agents/decision_agent.py`)
 -   **Role**: Selection and Filtering.
@@ -120,5 +122,5 @@ Request 5 ──┘                    + asyncio.Semaphore for crawl concurrency
 Request 6 ──► queued until a slot opens
 ```
 
-- **Web API**: All LLM calls use `AsyncOpenAI` (non-blocking). DuckDuckGo search runs in a thread via `asyncio.to_thread`.
+- **Web API**: All LLM calls use `AsyncOpenAI` (non-blocking). SearXNG search runs in a thread via `asyncio.to_thread`.
 - **CLI**: Uses synchronous clients directly. Crawling still uses async internally via `asyncio.run`.
