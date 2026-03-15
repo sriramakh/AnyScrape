@@ -32,7 +32,7 @@ class SynthesisAgent:
     # Per-mode limits for content extraction and token generation
     _MODE_LIMITS = {
         "fast":          {"snippet_chars": 4000,  "max_tokens": 1200},
-        "comprehensive": {"snippet_chars": 12000, "max_tokens": 4096},
+        "comprehensive": {"snippet_chars": 20000, "max_tokens": 6000},
     }
 
     def __init__(self) -> None:

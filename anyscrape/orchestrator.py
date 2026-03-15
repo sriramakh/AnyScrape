@@ -56,7 +56,7 @@ class AnyScrapeOrchestrator:
         self._synthesis_agent.set_mode(mode)
 
         # Comprehensive mode gets more search results to work with
-        max_results = 10 if mode == "comprehensive" else None
+        max_results = 25 if mode == "comprehensive" else None
 
         # Step 1: search (run blocking DDGS in a thread)
         raw_results = await self._search_agent.async_web_search(query, max_results_override=max_results)
@@ -105,7 +105,7 @@ def run_query_sync(query: str, mode: Mode = "fast") -> Dict[str, Any]:
     decision.set_mode(mode)
     synthesis.set_mode(mode)
 
-    max_results = 10 if mode == "comprehensive" else None
+    max_results = 25 if mode == "comprehensive" else None
 
     raw_results = search.web_search(query, max_results_override=max_results)
     ranked_results = search.rank_relevance(query, raw_results)

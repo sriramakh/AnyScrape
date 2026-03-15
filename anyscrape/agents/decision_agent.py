@@ -34,7 +34,7 @@ class DecisionAgent:
     def set_mode(self, mode: str) -> None:
         """Adjust limits based on crawl mode."""
         if mode == "comprehensive":
-            self._max_urls = 10
+            self._max_urls = 25
         else:
             self._max_urls = 5
 
