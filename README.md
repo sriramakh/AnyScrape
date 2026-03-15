@@ -10,9 +10,11 @@ AnyScrape is a powerful, autonomous multi-agent web scraping and research pipeli
   - **Fast Mode**: Quick extraction of content from top results.
   - **Comprehensive Mode**: Deep adaptive crawling that follows links and explores domains to find specific information (e.g., job listings, news).
 - **Anti-Bot Evasion**: Automatically detects blocking (CAPTCHAs, 403s) and retries with visible browsers or different strategies.
+- **Proxy IP Rotation**: Built-in Webshare proxy support to rotate IPs and avoid rate limiting or geo-blocks.
 - **LLM Synthesis**: Consolidates gathered information into structured, markdown-formatted answers with citations.
+- **Fully Async Pipeline**: Non-blocking async LLM calls and per-URL browser isolation for safe concurrent request handling.
 - **CLI Interface**: Simple command-line interface for easy interaction.
-- **Web API**: FastAPI-based HTTP API so you can call AnyScrape from any machine or service.
+- **Web API**: FastAPI-based HTTP API with concurrency controls and error handling.
 
 ## Prerequisites
 
@@ -23,8 +25,8 @@ AnyScrape is a powerful, autonomous multi-agent web scraping and research pipeli
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/yourusername/anyscrape.git
-    cd anyscrape
+    git clone https://github.com/sriramakh/AnyScrape.git
+    cd AnyScrape
     ```
 
 2.  **Create and activate a virtual environment:**
@@ -73,7 +75,7 @@ python -m anyscrape.cli "Top AI news this week" --json
 
 ## Web API Server
 
-You can also run AnyScrape as an HTTP API using FastAPI.
+You can also run AnyScrape as an HTTP API using FastAPI. The API supports concurrent requests with built-in concurrency limits (max 5 parallel pipelines) and proper error handling.
 
 ### Local (uvicorn)
 
@@ -121,6 +123,25 @@ docker run --rm -p 8000:8000 --env-file .env \
 | `ANYSCRAPE_MAX_RESULTS` | Max search results to process. | `5` |
 | `ANYSCRAPE_MAX_CRAWL_CONCURRENCY` | Max concurrent crawl tasks. | `3` |
 | `ANYSCRAPE_HEADLESS_DEFAULT` | Run browser in headless mode. | `true` |
+
+### Proxy Configuration (Webshare)
+
+AnyScrape supports IP rotation via Webshare proxies to avoid blocks and rate limits. Configure using one of two methods:
+
+**Option A — Webshare API key** (auto-fetches your full proxy list):
+| Environment Variable | Description |
+|----------------------|-------------|
+| `WEBSHARE_API_KEY` | Your Webshare API token. Fetches up to 100 proxies automatically. |
+
+**Option B — Direct rotating proxy endpoint**:
+| Environment Variable | Description |
+|----------------------|-------------|
+| `WEBSHARE_PROXY_HOST` | Proxy hostname (e.g., `p.webshare.io`). |
+| `WEBSHARE_PROXY_PORT` | Proxy port (e.g., `80`). |
+| `WEBSHARE_PROXY_USERNAME` | Proxy auth username. |
+| `WEBSHARE_PROXY_PASSWORD` | Proxy auth password. |
+
+If no proxy variables are set, AnyScrape crawls directly without a proxy.
 
 ## License
 
