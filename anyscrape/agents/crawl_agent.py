@@ -76,7 +76,9 @@ class ProxyRotator:
         # Option 2: Direct proxy credentials (single rotating endpoint)
         if not self._proxies and self._settings.webshare_proxy_host:
             self._proxies.append({
-                "server": f"http://{self._settings.webshare_proxy_username}:{self._settings.webshare_proxy_password}@{self._settings.webshare_proxy_host}:{self._settings.webshare_proxy_port}",
+                "server": f"http://{self._settings.webshare_proxy_host}:{self._settings.webshare_proxy_port}",
+                "username": self._settings.webshare_proxy_username,
+                "password": self._settings.webshare_proxy_password,
             })
             logger.info("Using direct Webshare rotating proxy endpoint")
 
@@ -141,9 +143,7 @@ class CrawlAgent:
         async def run_with_headless(flag: bool) -> PageContent | None:
             proxy = self._proxy_rotator.get_proxy()
             if proxy:
-                # Log proxy host without credentials
-                proxy_host = proxy["server"].split("@")[-1] if "@" in proxy["server"] else proxy["server"]
-                logger.info("Crawling URL (headless=%s, proxy=%s): %s", flag, proxy_host, url)
+                logger.info("Crawling URL (headless=%s, proxy=%s): %s", flag, proxy["server"], url)
             else:
                 logger.info("Crawling URL (headless=%s): %s", flag, url)
             browser_config = BrowserConfig(

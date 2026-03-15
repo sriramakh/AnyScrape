@@ -10,6 +10,8 @@ class Settings:
     max_search_results: int = 5
     max_crawl_concurrency: int = 3
     headless_default: bool = True
+    # SearXNG search backend
+    searxng_base_url: str = ""
     # Webshare proxy rotation (set API key OR direct proxy credentials)
     webshare_api_key: str = ""
     webshare_proxy_host: str = ""
@@ -34,6 +36,7 @@ class Settings:
             max_search_results=max_results,
             max_crawl_concurrency=concurrency,
             headless_default=headless_default,
+            searxng_base_url=os.getenv("SEARXNG_BASE_URL", ""),
             webshare_api_key=os.getenv("WEBSHARE_API_KEY", ""),
             webshare_proxy_host=os.getenv("WEBSHARE_PROXY_HOST", ""),
             webshare_proxy_port=os.getenv("WEBSHARE_PROXY_PORT", ""),
