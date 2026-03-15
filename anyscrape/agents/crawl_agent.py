@@ -76,9 +76,7 @@ class ProxyRotator:
         # Option 2: Direct proxy credentials (single rotating endpoint)
         if not self._proxies and self._settings.webshare_proxy_host:
             self._proxies.append({
-                "server": f"http://{self._settings.webshare_proxy_host}:{self._settings.webshare_proxy_port}",
-                "username": self._settings.webshare_proxy_username,
-                "password": self._settings.webshare_proxy_password,
+                "server": f"http://{self._settings.webshare_proxy_username}:{self._settings.webshare_proxy_password}@{self._settings.webshare_proxy_host}:{self._settings.webshare_proxy_port}",
             })
             logger.info("Using direct Webshare rotating proxy endpoint")
 
