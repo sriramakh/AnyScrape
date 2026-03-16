@@ -208,7 +208,21 @@ class CrawlAgent:
         """
         Heuristics to detect if a page likely represents a bot-detection wall.
         """
-        text = page.markdown.lower()[:2000]
+        domain = get_domain_from_url(page.url)
+
+        # Check 1: Very little usable markdown despite having HTML means
+        # the page is likely a JS challenge / bot wall.
+        if len(page.html) > 5000 and len(page.markdown.strip()) < 200:
+            logger.info(
+                "Blocked: HTML=%d bytes but markdown only %d bytes for %s",
+                len(page.html), len(page.markdown.strip()), page.url,
+            )
+            if domain:
+                self._memory.increment("crawl_agent", domain, "blocked_count", 1)
+            return True
+
+        # Check 2: Known blockage markers in the text content.
+        text = (page.markdown + " " + page.html[:5000]).lower()
         blockage_markers = [
             "access denied",
             "unusual traffic",
@@ -216,23 +230,35 @@ class CrawlAgent:
             "captcha",
             "akamai",
             "request blocked",
+            "just a moment",
+            "checking your browser",
+            "security check",
+            "please wait",
+            "enable javascript and cookies",
+            "ray id",
+            "cloudflare",
+            "perimeter x",
+            "perimeterx",
+            "are you a robot",
+            "bot protection",
+            "human verification",
         ]
         if any(marker in text for marker in blockage_markers):
-            logger.debug("Blockage markers detected in content for %s", page.url)
-            domain = get_domain_from_url(page.url)
+            logger.info("Blocked: blockage marker detected in content for %s", page.url)
             if domain:
                 self._memory.increment("crawl_agent", domain, "blocked_count", 1)
             return True
+
+        # Check 3: Suspiciously small HTML with no real content.
         if len(page.html) < 2000 and "doctype html" not in page.html.lower():
-            logger.debug(
-                "Suspiciously small HTML (%d bytes) for %s, may be blocked",
-                len(page.html),
-                page.url,
+            logger.info(
+                "Blocked: suspiciously small HTML (%d bytes) for %s",
+                len(page.html), page.url,
             )
-            domain = get_domain_from_url(page.url)
             if domain:
                 self._memory.increment("crawl_agent", domain, "blocked_count", 1)
             return True
+
         return False
 
     def _build_crawl_plan_prompt(self, query: str, search_results: List[SearchResult]) -> tuple[str, list]:
