@@ -5,21 +5,22 @@ AnyScrape is a powerful, autonomous multi-agent web scraping and research pipeli
 ## Features
 
 - **Multi-Agent Architecture**: Orchestrates specialized agents for searching, decision-making, crawling, and synthesis.
-- **SearXNG Search**: Uses a self-hosted SearXNG metasearch engine that aggregates results from Google, Bing, DuckDuckGo, Brave, and Wikipedia.
+- **SearXNG Search**: Uses a self-hosted SearXNG metasearch engine that aggregates results from Google, Bing, DuckDuckGo, Brave, and Wikipedia — with weighted engine ranking for high-quality results.
 - **Adaptive Crawling**:
-  - **Fast Mode**: Quick extraction of content from top results.
-  - **Comprehensive Mode**: Deep adaptive crawling that follows links and explores domains to find specific information (e.g., job listings, news). 5x the limits of fast mode.
-- **Anti-Bot Evasion**: Automatically detects blocking (CAPTCHAs, 403s) and retries with visible browsers or different strategies.
+  - **Fast Mode**: Quick extraction of content from top results (5 search results, 5 URLs, 4K chars/page, 1200 max tokens).
+  - **Comprehensive Mode**: Deep adaptive crawling with 5x the limits (25 search results, 25 URLs, 20K chars/page, 6000 max tokens).
+- **Anti-Bot Evasion**: Detects Cloudflare, CAPTCHA, PerimeterX, and other bot walls using content heuristics (blockage markers + markdown-vs-HTML ratio analysis). Automatically retries blocked pages with visible browsers via xvfb virtual display.
 - **Proxy IP Rotation**: Built-in Webshare proxy support to rotate IPs and avoid rate limiting or geo-blocks.
 - **LLM Synthesis**: Consolidates gathered information into structured, markdown-formatted answers with citations.
 - **Fully Async Pipeline**: Non-blocking async LLM calls and per-URL browser isolation for safe concurrent request handling.
+- **VPS-Ready**: Docker image includes xvfb for headless=False browser retries on servers without a display.
 - **CLI Interface**: Simple command-line interface for easy interaction.
 - **Web API**: FastAPI-based HTTP API with concurrency controls and error handling.
 
 ## Prerequisites
 
 - Python 3.10+
-- Docker & Docker Compose (for SearXNG)
+- Docker & Docker Compose (for SearXNG and production deployment)
 - OpenAI API Key (or compatible LLM API key)
 
 ## Quick Start (Docker Compose)
@@ -35,7 +36,7 @@ docker compose up -d
 
 This starts:
 - **SearXNG** on port `8888` (metasearch engine)
-- **AnyScrape API** on port `8081` (connected to SearXNG internally)
+- **AnyScrape API** on port `8081` (connected to SearXNG internally, with xvfb for anti-bot retries)
 
 ```bash
 curl -X POST http://localhost:8081/query \
@@ -73,6 +74,13 @@ curl -X POST http://localhost:8081/query \
     ```env
     OPENAI_API_KEY=your_openai_api_key_here
     SEARXNG_BASE_URL=http://localhost:8888
+    ```
+
+6.  **(VPS only) Install xvfb** for anti-bot browser retries:
+    ```bash
+    sudo apt-get install -y xvfb
+    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+    export DISPLAY=:99
     ```
 
 ## Usage (CLI)
@@ -120,7 +128,7 @@ curl -X POST http://localhost:8000/query \
 docker compose up -d
 ```
 
-This runs both SearXNG and AnyScrape. The API is available on port `8081`.
+This runs both SearXNG and AnyScrape. The API is available on port `8081`. The AnyScrape container includes xvfb so anti-bot browser retries work on headless servers.
 
 ## Configuration
 
@@ -129,7 +137,7 @@ This runs both SearXNG and AnyScrape. The API is available on port `8081`.
 | `OPENAI_API_KEY` | Required. API key for LLM. | - |
 | `SEARXNG_BASE_URL` | Required. URL of your SearXNG instance. | - |
 | `ANYSCRAPE_MODEL` | LLM model to use. | `gpt-4o-mini` |
-| `ANYSCRAPE_MAX_RESULTS` | Max search results to process. | `5` |
+| `ANYSCRAPE_MAX_RESULTS` | Max search results to process (fast mode). | `5` |
 | `ANYSCRAPE_MAX_CRAWL_CONCURRENCY` | Max concurrent crawl tasks. | `3` |
 | `ANYSCRAPE_HEADLESS_DEFAULT` | Run browser in headless mode. | `true` |
 
@@ -151,6 +159,17 @@ AnyScrape supports IP rotation via Webshare proxies to avoid blocks and rate lim
 | `WEBSHARE_PROXY_PASSWORD` | Proxy auth password. |
 
 If no proxy variables are set, AnyScrape crawls directly without a proxy.
+
+## Anti-Bot Detection
+
+AnyScrape uses a multi-layered approach to detect and bypass bot protection:
+
+1. **Markdown-vs-HTML ratio check** — If a page returns large HTML but near-zero markdown, it's likely a JS challenge page (Cloudflare, PerimeterX, etc.).
+2. **Blockage marker detection** — Scans both markdown and raw HTML for known patterns: `just a moment`, `cloudflare`, `captcha`, `security check`, `ray id`, `perimeter x`, `are you a robot`, and more.
+3. **Small HTML heuristic** — Pages under 2KB with no doctype are flagged as blocked.
+4. **Automatic retry** — Blocked pages are retried with `headless=False` (visible browser), which bypasses some bot detection.
+5. **Domain memory** — Tracks which domains block headless browsers so future requests use visible mode first.
+6. **xvfb on VPS** — Docker image includes a virtual framebuffer so visible browser retries work on headless servers.
 
 ## License
 
